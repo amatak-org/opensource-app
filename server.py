@@ -5,6 +5,9 @@ import zipfile
 import requests
 import socket
 import subprocess
+import importlib.util
+import sys
+import json
 from datetime import datetime
 from flask import Flask, request, redirect, url_for, flash, render_template_string, send_from_directory,render_template,render_template, session
 from werkzeug.utils import secure_filename
@@ -16,16 +19,27 @@ from werkzeug.security import generate_password_hash, check_password_hash
 app = Flask(__name__)
 app.secret_key = 'your_secret_key'
 app.config['UPLOAD_FOLDER'] = 'uploads'
+app.config['PLUGINS_FOLDER'] = 'plugins'
 app.config['MAX_CONTENT_LENGTH'] = 1600 * 1024 * 1024  # Limit max upload size to 16MB
+app.config['USER_DATA'] = {}  # In-memory store for user data (for demonstration purposes)
 
 if not os.path.exists(app.config['UPLOAD_FOLDER']):
     os.makedirs(app.config['UPLOAD_FOLDER'])
+    
+if not os.path.exists(app.config['PLUGINS_FOLDER']):
+    os.makedirs(app.config['PLUGINS_FOLDER'])
 
 ALLOWED_EXTENSIONS = {'txt', 'py', 'html', 'css', 'js', 'md', 'xlsm', 'md','pdf','zip', 'jpg', 'jpeg', 'png', 'gif'}
 
-
+### k panel curret app version
 CURRENT_VERSION = '1.0.1'
 GITHUB_API_URL = "https://api.github.com/repos/yourusername/yourrepo/releases/latest"  # Update with your repo
+
+
+
+# Sample websites data
+WEBSITES = ['example.com', 'test.com', 'mysite.org']
+
 
 ###FOR DEMO ####
 # Mock user data for testing
@@ -41,6 +55,31 @@ mock_files = [
     {'type': 'folder', 'name': 'Subfolder1', 'permissions': 'drwxr-xr-x'},
     {'type': 'folder', 'name': 'Subfolder2', 'permissions': 'drwxr-xr-x'},
 ]
+
+
+# Sample app store data
+APPSTORE = [
+    {
+        'title': 'Nginx',
+        'image': 'https://nginx.org/nginx.png',
+        'description': 'High-performance HTTP server and reverse proxy',
+        'install_command': 'sudo apt-get install nginx'
+    },
+    {
+        'title': 'MySQL',
+        'image': 'https://www.mysql.com/common/logos/logo-mysql-170x115.png',
+        'description': 'Open-source relational database management system',
+        'install_command': 'sudo apt-get install mysql-server'
+    },
+    {
+        'title': 'PHP',
+        'image': 'https://www.php.net/images/logos/new-php-logo.svg',
+        'description': 'Popular general-purpose scripting language',
+        'install_command': 'sudo apt-get install php'
+    }
+]
+
+
 
 def get_files_and_folders(base_folder):
     return mock_files  # Return mock data inst
@@ -73,7 +112,11 @@ def index():
     items = get_files_and_folders(app.config['UPLOAD_FOLDER'])
     server_ip = get_server_ip()
     server_info = get_server_info()
-    return render_template('index.html' ,server_ip=get_server_ip(), server_info=get_server_info() ,items=items, current_year=datetime.now().year) 
+    #plugins = load_plugins()
+    logged_in = 'username' in session
+    user_avatar = "https://via.placeholder.com/40"  # Placeholder for
+    
+    return render_template('index.html' ,server_ip=get_server_ip(), server_info=get_server_info(), logged_in='username' in session, username=session.get('username'), user_avatar="https://via.placeholder.com/40", appstore=APPSTORE,websites=WEBSITES ,items=items, current_year=datetime.now().year) 
 
 
 
@@ -87,7 +130,9 @@ def get_server_info():
    # memory_info = subprocess.check_output("free -m", shell=True).decode()
     #disk_usage = subprocess.check_output("df -h", shell=True).decode()
    
-   return {
+   
+   
+   return { # this file need to be disable when server is live
         'mock_files'
     }
    ## end server detail mock_files
@@ -149,13 +194,7 @@ def profile():
         flash('You must be logged in to view your profile.')
         return redirect(url_for('login'))
 
-    return render_template_string('''
-    <!doctype html>
-    <title>User Profile</title>
-    <h2>User Profile for {{ username }}</h2>
-    <p>Manage your settings and account details here.</p>
-    <a href="{{ url_for('index') }}">Back to Home</a>
-    ''', username=username)
+    return render_template('account/profile.html', username=username)
 
 @app.route('/', methods=['POST'])
 def upload_file_action():
@@ -193,8 +232,6 @@ def perform_action():
                 shutil.rmtree(item_path)
                 flash(f'Folder {name} successfully deleted.')
 
-    return redirect(url_for('index'))
-
 @app.route('/view/<path:filename>')
 def view_file(filename):
     file_path = os.path.join(app.config['UPLOAD_FOLDER'], filename)
@@ -211,46 +248,7 @@ def view_folder(foldername):
 
     if os.path.exists(folder_path):
         items = get_files_and_folders(folder_path)
-        return render_template_string('''
-        <!doctype html>
-        <title>Folder Details</title>
-        <h1>Details of Folder: {{ foldername }}</h1>
-
-        <h2>Files and Subfolders</h2>
-        <table border="1">
-            <tr>
-                <th>#</th>
-                <th>Type</th>
-                <th>Name</th>
-                <th>File Extension</th>
-                <th>Path</th>
-                <th>Permissions</th>
-                <th>Actions</th>
-            </tr>
-            {% for item in items %}
-            <tr>
-                <td>{{ loop.index }}</td>
-                <td>{{ item.type }}</td>
-                <td>
-                    {% if item.type == 'file' %}
-                        <a href="{{ url_for('view_file', filename=item.name) }}">{{ item.name }}</a>
-                    {% else %}
-                        <a href="{{ url_for('view_folder', foldername=item.name) }}">{{ item.name }}</a>
-                    {% endif %}
-                </td>
-                <td>{{ item.extension if item.type == 'file' else '-' }}</td>
-                <td>{{ item.permissions }}</td>
-                <td>
-                    <form method="POST" action="{{ url_for('perform_action') }}" style="display:inline;">
-                        <input type="submit" name="action" value="Delete" onclick="return confirm('Are you sure you want to delete this item?');">
-                    </form>
-                </td>
-            </tr>
-            {% endfor %}
-        </table>
-
-        <a href="{{ url_for('index') }}">Back to Main</a>
-        ''', items=items, foldername=foldername)
+        return render_template_string('views/views_file.html', items=items, foldername=foldername)
     else:
         flash('Folder not found.')
         return redirect(url_for('index'))
@@ -335,6 +333,87 @@ def check_for_updates():
     return None
 
 ## end check update.
+
+
+###plugins
+def load_plugins():
+    plugins = {}
+    for filename in os.listdir(app.config['PLUGINS_FOLDER']):
+        if filename.endswith('.py'):
+            plugin_name = filename[:-3]
+            spec = importlib.util.spec_from_file_location(plugin_name, os.path.join(app.config['PLUGINS_FOLDER'], filename))
+            module = importlib.util.module_from_spec(spec)
+            sys.modules[plugin_name] = module
+            spec.loader.exec_module(module)
+            if hasattr(module, 'run'):
+                plugins[plugin_name] = module.run
+    return plugins
+
+@app.route('/plugins')
+def plugins():
+    items = get_files_and_folders(app.config['UPLOAD_FOLDER'])
+    logged_in = 'username' in session
+    plugins = load_plugins()
+
+    return render_template('plugins.html', items=items, logged_in=logged_in, plugins=plugins)
+
+app.route('/run_plugin/<plugin_name>')
+def run_plugin(plugin_name):
+    plugins = load_plugins()
+    if plugin_name in plugins:
+        result = plugins[plugin_name]()
+        return f"Result of {plugin_name}: {result}"
+    else:
+        return f"Plugin {plugin_name} not found."
+####- end plugins.
+
+
+### ufw setup
+def get_ufw_status():
+    try:
+        output = subprocess.check_output(['sudo', 'ufw', 'status', 'numbered']).decode('utf-8')
+        return output
+    except subprocess.CalledProcessError:
+        return "Unable to get UFW status"
+
+@app.route('/ufw')
+def ufw():
+    items = get_files_and_folders(app.config['UPLOAD_FOLDER'])
+    ufw_status = get_ufw_status()
+
+    return render_template_string('security/firwall.html', items=items, ufw_status=ufw_status)
+
+@app.route('/ufw_status')
+def ufw_status():
+    return get_ufw_status()
+
+#### AppStore
+@app.route('/appstore')
+def appstore():
+    items = get_files_and_folders(app.config['UPLOAD_FOLDER'])
+
+    return render_template('appstore/index.html', items=items, appstore=APPSTORE)
+
+@app.route('/install_app', methods=['POST'])
+def install_app():
+    data = request.json
+    command = data.get('command')
+    try:
+        subprocess.run(command, shell=True, check=True)
+        return jsonify({"message": "App installed successfully"}), 200
+    except subprocess.CalledProcessError:
+        return jsonify({"message": "Failed to install app"}), 500
+
+### End Apptore setting up.
+
+
+### Dabase Management
+@app.route('/database')
+def database():
+    items = get_files_and_folders(app.config['UPLOAD_FOLDER'])
+
+    return render_template('database/index.html', items=items, appstore=APPSTORE, websites=WEBSITES)
+##### End Database 
 
 if __name__ == '__main__':
     app.run(debug=True)
