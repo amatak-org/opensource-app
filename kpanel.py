@@ -4,16 +4,38 @@ import sys
 import os
 import subprocess
 import argparse
+import platform
+import psutil
+import configparser
+import getpass
+import re
+
+CONFIG_FILE = 'kpanel_config.ini'
+
+def load_config():
+    config = configparser.ConfigParser()
+    if os.path.exists(CONFIG_FILE):
+        config.read(CONFIG_FILE)
+    else:
+        config['USER'] = {'username': 'admin', 'password': 'password'}
+        config['SERVER'] = {'bind_ip': '0.0.0.0'}
+        with open(CONFIG_FILE, 'w') as configfile:
+            config.write(configfile)
+    return config
+
+def save_config(config):
+    with open(CONFIG_FILE, 'w') as configfile:
+        config.write(configfile)
 
 def start_server():
     print("Starting KPanel server...")
-    # Add code to start your Flask server
-    subprocess.run(["python server.py", "server.py"])
+    subprocess.Popen(["python3", "server.py"])
+    print("KPanel server started.")
 
 def stop_server():
     print("Stopping KPanel server...")
-    # Add code to stop your Flask server
     subprocess.run(["pkill", "-f", "server.py"])
+    print("KPanel server stopped.")
 
 def restart_panel():
     print("Restarting KPanel...")
@@ -22,21 +44,123 @@ def restart_panel():
 
 def repair_panel():
     print("Repairing KPanel...")
-    # Add code to repair your panel (e.g., reinstall dependencies, check configurations)
+    
+    # Update system packages
+    print("Updating system packages...")
+    subprocess.run(["sudo", "apt", "update"])
+    subprocess.run(["sudo", "apt", "upgrade", "-y"])
+    
+    # Reinstall dependencies
+    print("Reinstalling dependencies...")
+    subprocess.run(["pip3", "install", "--upgrade", "pip"])
     subprocess.run(["pip3", "install", "-r", "requirements.txt"])
-    # Add more repair steps as needed
+    
+    # Check configurations
+    print("Checking configurations...")
+    config_files = ["server.py", CONFIG_FILE]
+    for file in config_files:
+        if os.path.exists(file):
+            print(f"{file} exists.")
+        else:
+            print(f"Warning: {file} not found.")
+    
+    # Check permissions
+    print("Checking permissions...")
+    subprocess.run(["sudo", "chown", "-R", os.getenv("USER"), "."])
+    subprocess.run(["sudo", "chmod", "-R", "755", "."])
+    
+    print("Repair completed.")
 
 def reload_panel():
     print("Reloading KPanel configuration...")
-    # Add code to reload your panel configuration
-    subprocess.run(["touch", "server.py"])  # This will trigger a reload in most WSGI servers
+    
+    # For Gunicorn
+    if subprocess.run(["pgrep", "-f", "gunicorn"]).returncode == 0:
+        print("Reloading Gunicorn...")
+        subprocess.run(["sudo", "systemctl", "reload", "gunicorn"])
+    
+    # For uWSGI
+    elif subprocess.run(["pgrep", "-f", "uwsgi"]).returncode == 0:
+        print("Reloading uWSGI...")
+        subprocess.run(["sudo", "systemctl", "reload", "uwsgi"])
+    
+    # For Apache (mod_wsgi)
+    elif subprocess.run(["pgrep", "-f", "apache2"]).returncode == 0:
+        print("Reloading Apache...")
+        subprocess.run(["sudo", "systemctl", "reload", "apache2"])
+    
+    else:
+        print("No known WSGI server found. Attempting to restart the Python script...")
+        restart_panel()
 
 def panel_information():
     print("KPanel Information:")
-    # Add code to display panel information (e.g., version, status, etc.)
-    print("Version: 1.0")
-    print("Status: Running")
-    # Add more information as needed
+    
+    config = load_config()
+    
+    print(f"Username: {config['USER']['username']}")
+    print(f"Bind IP: {config['SERVER']['bind_ip']}")
+    
+    # OS Information
+    print(f"Operating System: {platform.system()} {platform.release()}")
+    print(f"Distribution: {platform.dist()[0]} {platform.dist()[1]}")
+    
+    # Python Version
+    print(f"Python Version: {platform.python_version()}")
+    
+    # CPU Information
+    cpu_info = f"{psutil.cpu_count()} cores, {psutil.cpu_percent()}% utilized"
+    print(f"CPU: {cpu_info}")
+    
+    # Memory Information
+    memory = psutil.virtual_memory()
+    memory_info = f"Total: {memory.total / (1024**3):.2f} GB, Used: {memory.percent}%"
+    print(f"Memory: {memory_info}")
+    
+    # Disk Information
+    disk = psutil.disk_usage('/')
+    disk_info = f"Total: {disk.total / (1024**3):.2f} GB, Used: {disk.percent}%"
+    print(f"Disk: {disk_info}")
+    
+    # KPanel Status
+    if subprocess.run(["pgrep", "-f", "server.py"]).returncode == 0:
+        print("KPanel Status: Running")
+    else:
+        print("KPanel Status: Stopped")
+
+def reset_username():
+    config = load_config()
+    new_username = input("Enter new username: ")
+    config['USER']['username'] = new_username
+    save_config(config)
+    print("Username updated successfully.")
+
+def reset_password():
+    config = load_config()
+    new_password = getpass.getpass("Enter new password: ")
+    confirm_password = getpass.getpass("Confirm new password: ")
+    if new_password == confirm_password:
+        config['USER']['password'] = new_password
+        save_config(config)
+        print("Password updated successfully.")
+    else:
+        print("Passwords do not match. Password not updated.")
+
+def bind_ip_address():
+    config = load_config()
+    while True:
+        new_ip = input("Enter new IP address to bind (or 'cancel' to abort): ")
+        if new_ip.lower() == 'cancel':
+            print("Operation cancelled.")
+            return
+        if re.match(r"^(?:(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\.){3}(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)$", new_ip):
+            config['SERVER']['bind_ip'] = new_ip
+            save_config(config)
+            print(f"Server will now bind to IP: {new_ip}")
+            print("Please restart the server for changes to take effect.")
+            break
+        else:
+            print("Invalid IP address format. Please try again.")
 
 def main():
     parser = argparse.ArgumentParser(description="KPanel Management Tool")
@@ -54,16 +178,19 @@ def main():
             print("Invalid subcommand. Use 'start' or 'stop'.")
     elif not args.command:
         while True:
-            print("\nKPanel Server Options:")
+            print("\nKPanel Management Options:")
             print("1. Start server")
             print("2. Stop server")
             print("3. Restart panel")
             print("4. Repair panel")
             print("5. Reload panel")
             print("6. Panel information")
+            print("7. Reset username")
+            print("8. Reset password")
+            print("9. Bind IP address")
             print("0. Exit")
 
-            choice = input("Enter your choice (0-6): ")
+            choice = input("Enter your choice (0-9): ")
 
             if choice == "1":
                 start_server()
@@ -77,6 +204,12 @@ def main():
                 reload_panel()
             elif choice == "6":
                 panel_information()
+            elif choice == "7":
+                reset_username()
+            elif choice == "8":
+                reset_password()
+            elif choice == "9":
+                bind_ip_address()
             elif choice == "0":
                 print("Exiting KPanel Management Tool.")
                 break
