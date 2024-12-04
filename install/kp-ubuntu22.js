@@ -11,8 +11,7 @@ const commands = [
   'sudo apt install -y python3-pip',
   'sudo pip install --upgrade psutil',
   'git clone https://github.com/amatak-org/opensource-app.git',
-  'cd opensource-app',
-  'cd install',
+  'cd opensource-app/insall',
   'python3 kpanel_install.py'
 ];
 
