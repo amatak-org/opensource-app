@@ -39,7 +39,7 @@ def generate_nginx_config():
     nginx_config = """
 server {
     listen 80;
-    server_name demo.kpanel.amatak.org;
+    server_name demo.kpanel.amatak.cloud;
 
     root /var/www/kpanel;
 
